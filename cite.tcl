@@ -4,12 +4,13 @@
 set vers "0.2"
 
 set citedb "scripts/cite.db"
+set dumpfile "scripts/cite.db.txt"
+
 array set cites {}
 set citecount 0
+set citeschanged 0
 
 bind pub o|F !list pub:cdblist
-bind pub - !help pub:cdbhelp
-bind msg - !help msg:cdbhelp
 bind pub - !fact pub:cdbfact
 bind msg - !fact msg:cdbfact
 bind pub - !randfact pub:cdbrand
@@ -35,28 +36,9 @@ proc pub:cdbrand {n u h c a} {
     }
 }
 
-proc msg:cdbhelp {n u h a} {
-    global vers
-    puthelp "PRIVMSG $n :factbot v$vers  --  autosave every 10 minutes"
-    puthelp "PRIVMSG $n :==========================================="
-    puthelp "PRIVMSG $n :channel cmd      | desc"
-    puthelp "PRIVMSG $n :-----------------+-------------------------"
-    puthelp "PRIVMSG $n :!fact <#>        | get fact num <#>"
-    puthelp "PRIVMSG $n :!add <fact>      | add <fact>"
-    puthelp "PRIVMSG $n :factbot: <fact>  | idem"
-    puthelp "PRIVMSG $n :!del <#>         | delete fact num <#>"
-    puthelp "PRIVMSG $n :!grep <regex>    | search facts for <regex>"
-    puthelp "PRIVMSG $n :!help            | guess what?"
-    puthelp "PRIVMSG $n :!randfact        | get a random fact"
-}
-
-proc pub:cdbhelp {n u h c a} {
-    msg:cdbhelp $n $u $h $a
-}
-
 proc pub:cdblist {n u h c a} {
     global cites
-   	set citequery [lsort -integer [array names cites]]
+    set citequery [lsort -integer [array names cites]]
     if {[llength $citequery] == 0} {
         putquick "PRIVMSG $c :currently no facts exist"
     } else {
@@ -145,32 +127,34 @@ proc pub:cdbsearch {n u h c a} {
 }
 
 proc pub:cdbdel {n u h c a} {
-    global cites
+    global cites citeschanged
     set what [string trim $a]
     set j 0
     foreach i $what {
         if {[info exists cites($i)]} {
             unset cites($i)
             incr j
+            set citeschanged 1
         }
     }
     putquick "PRIVMSG $c :$j facts removed"
 }
 
 proc pub:cdbset {n u h c a} {
-    global cites citecount
+    global cites citecount citeschanged
     set id [lindex "$a" 0]
-   	set txt [regsub {^\s*\d+\s+} [string trim $a] {}]
+    set txt [regsub {^\s*\d+\s+} [string trim $a] {}]
     if {[string length $txt] > 0 && $id >= 0 && $id <= $citecount} {
-    	putquick "PRIVMSG $c :\[$id\] $txt"
-    	set cites($id) $txt
+        putquick "PRIVMSG $c :\[$id\] $txt"
+        set cites($id) $txt
+        set citeschanged 1
     } else {
         putquick "PRIVMSG $c :new fact is empty or id is out of range"
     }
 }
 
 proc pub:cdbadd {n u h c a} {
-    global cites citecount
+    global cites citecount citeschanged
     set txt [string trim $a]
     if {[string length $txt] > 0 && $txt != "{}"} {
         set keys [lsort -integer [array names cites]]
@@ -183,17 +167,34 @@ proc pub:cdbadd {n u h c a} {
         incr citecount
         putquick "PRIVMSG $c :\[$citecount\] $txt"
         set cites($citecount) $txt
+        set citeschanged 1
     } else {
         putquick "PRIVMSG $c :no fact given"
     }
 }
 
 proc int:cdbsave {} {
-    global citedb cites citecount
-    set fp [open $citedb w]
-    puts $fp [list array set cites [array get cites]]
-    puts $fp [list set citecount [set citecount]]
-    close $fp;
+    global citedb cites citecount citeschanged dumpfile
+    if {$citeschanged} {
+        set citeschanged 0
+        set fp [open $citedb w]
+        puts $fp [list array set cites [array get cites]]
+        puts $fp [list set citecount [set citecount]]
+        close $fp
+        set citequery [lsort -integer [array names cites]]
+        set fp [open $dumpfile w]
+        if {[llength $citequery] == 0} {
+            puts $fp "currently no facts exist"
+        } else {
+            foreach id $citequery {
+                puts $fp "\[$id\] $cites($id)"
+            }
+        }
+        close $fp
+        putlog "FactsDB saved"
+    } else {
+        putlog "FactsDB not saved (no change)"
+    }
 }
 
 proc auto:cdbsave {m h d w y} {
@@ -202,7 +203,6 @@ proc auto:cdbsave {m h d w y} {
 
 proc pub:cdbsave {n u h c a} {
     int:cdbsave
-    putquick "PRIVMSG $c :facts saved"
 }
 
 proc pub:cdbreset {n u h c a} {
